@@ -1,0 +1,151 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam nodesep 65
+skinparam ranksep 90
+skinparam defaultFontSize 14
+hide empty members
+left to right direction
+
+package "Rental — application" {
+ class TripApplicationService {
+  + startTrip(request, idempotencyKey): TripId
+  + finishTrip(tripId, request, idempotencyKey)
+  + getTrip(tripId): TripView
+ }
+ class RentalProcessManager {
+  + start(tripId)
+  + onPaymentAuthorized(event)
+  + onScooterUnlocked(event)
+  + onScooterLocked(event)
+  + onTimeout(processId)
+  + reconcile(processId)
+ }
+ interface PolicyResolver {
+  + resolveEligibility(userId): Eligibility
+  + resolveTariff(request): TariffSnapshot
+  + checkParking(location): GeoDecision
+ }
+ interface FleetClient {
+  + reserve(scooterId, tripId, operationId): Reservation
+  + renew(reservationToken)
+ }
+}
+
+package "Rental — domain" {
+ class Trip <<aggregate root>> {
+  - id: TripId
+  - userId: UserId
+  - scooterId: ScooterId
+  - status: TripStatus
+  - startedAt: Instant
+  - endedAt: Instant
+  - version: long
+  + activate(unlockOperationId, confirmedAt)
+  + requestFinish(decision)
+  + complete(lockOperationId, confirmedAt)
+  + assessFine(reason, evidence, amount): Fine
+ }
+ enum TripStatus {
+  STARTING
+  ACTIVE
+  FINISH_PENDING
+  COMPLETED
+  CANCELLED
+ }
+ class RentalProcess <<persistent saga state>> {
+  - id: ProcessId
+  - tripId: TripId
+  - step: ProcessStep
+  - reservationToken: String
+  - paymentOperationId: String
+  - deviceOperationId: String
+  - deadline: Instant
+  - version: long
+  + advance(expectedStep, nextStep)
+  + scheduleReconciliation()
+ }
+ class TariffSnapshot <<immutable value object>> {
+  - tariffVersion: String
+  - unlockFee: Money
+  - pricePerMinute: Money
+  - roundingRule: String
+  + calculate(startedAt, endedAt): Money
+ }
+ class GeoDecision <<immutable value object>> {
+  - policyVersion: String
+  - allowed: boolean
+  - observedAt: Instant
+  - accuracyMeters: Decimal
+ }
+ class Fine <<entity>> {
+  - id: FineId
+  - reason: String
+  - evidenceRef: String
+  - policyVersion: String
+  - amount: Money
+  - status: FineStatus
+  + cancel(reason)
+ }
+}
+
+package "Rental — persistence and messaging ports" {
+ interface RentalUnitOfWork {
+  + executeAtomically(action)
+ }
+ interface TripRepository {
+  + findById(tripId): Trip
+  + save(trip, expectedVersion)
+ }
+ interface ProcessRepository {
+  + findByTripId(tripId): RentalProcess
+  + save(process, expectedVersion)
+ }
+ interface Inbox {
+  + claim(eventId): boolean
+ }
+ interface Outbox {
+  + append(message)
+ }
+ interface IdempotencyStore {
+  + claim(userId, key, requestHash)
+  + saveResult(userId, key, result)
+ }
+}
+
+TripApplicationService --> RentalProcessManager
+TripApplicationService --> PolicyResolver
+TripApplicationService --> IdempotencyStore
+TripApplicationService --> TripRepository
+TripApplicationService --> RentalUnitOfWork
+RentalProcessManager --> FleetClient
+RentalProcessManager --> TripRepository
+RentalProcessManager --> ProcessRepository
+RentalProcessManager --> RentalUnitOfWork
+RentalProcessManager --> Inbox : Обработать событие один раз
+RentalProcessManager --> Outbox : Команды и начисления
+TripRepository ..> Trip
+ProcessRepository ..> RentalProcess
+RentalProcess ..> Trip : tripId
+Trip --> TripStatus
+Trip "1" *-- "1" TariffSnapshot
+Trip "1" *-- "0..*" GeoDecision
+Trip "1" *-- "0..*" Fine
+
+note bottom of RentalUnitOfWork
+Одна транзакция Rental DB объединяет изменения
+Trip / RentalProcess, inbox, outbox и ключ запроса,
+когда они участвуют в одной операции.
+Вызов внешнего API не входит в SQL-транзакцию:
+результат связывается через устойчивый operationId.
+end note
+
+note bottom of Trip
+Платёжное состояние хранится в Billing.
+COMPLETED устанавливается по подтверждению замка,
+а не по успешному списанию.
+Уникальность незавершённой поездки пользователя
+дополнительно обеспечивается ограничением БД.
+end note
+@enduml

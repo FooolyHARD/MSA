@@ -1,0 +1,50 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam nodesep 65
+skinparam ranksep 100
+skinparam defaultFontSize 15
+skinparam ArrowFontSize 13
+left to right direction
+
+rectangle "API Gateway\n[Container]" as gateway #EEEEEE
+rectangle "Fleet Service\n[Container]\nРезервы и управление замком" as fleet #EEEEEE
+rectangle "Customer / Pricing / Geo\n[Containers]\nДопуск, тарифы, геополитики" as policies #EEEEEE
+queue "Kafka\n[Container: message broker]" as kafka #FFF0CC
+database "Rental DB\n[Container: private database]\nПоездки, saga, снимки, inbox/outbox" as db
+
+package "Rental Service [Container: application]" {
+ rectangle "Trip API\n[Component: REST controller]\nНачать, завершить, получить поездку" as api #DCEBFF
+ rectangle "Trip Application Service\n[Component: application logic]\nПроверки, идемпотентность, транзакции" as app #DCEBFF
+ rectangle "Rental Process Manager\n[Component: saga]\nСохранение шагов, компенсации и сверка" as saga #DCEBFF
+ rectangle "Trip Domain\n[Component: domain model]\nСостояния поездки, стоимость и штрафы" as domain #DCEBFF
+ rectangle "Policy Resolver\n[Component: domain adapter]\nСвежие проекции или API владельцев" as resolver #DCEBFF
+ rectangle "Fleet Client\n[Component: REST adapter]\nРезерв и продление lease" as client #DCEBFF
+ rectangle "Event Consumer\n[Component: Kafka adapter]\nInbox, версии событий и проекции" as consumer #DCEBFF
+ rectangle "Recovery Worker\n[Component: background worker]\nТаймеры и зависшие процессы" as recovery #DCEBFF
+ rectangle "Rental Persistence\n[Component: repositories / unit of work]\nАтомарно: агрегаты, inbox и outbox" as persistence #DCEBFF
+ rectangle "Outbox Publisher\n[Component: background worker]\nПовторяемая публикация команд и фактов" as publisher #DCEBFF
+}
+
+gateway --> api : REST / HTTPS
+api --> app : Команды и запросы
+app --> resolver : Допуск, котировка, зона
+resolver --> policies : REST при необходимости
+resolver --> persistence : Локальные версии
+app --> saga : Начать / завершить процесс
+app --> domain : История, отмена штрафа
+saga --> domain : Переходы и расчёт
+saga --> client : Получить / продлить резерв
+client --> fleet : REST / HTTPS
+saga --> persistence : Состояние и исходящие команды
+app --> persistence : Ключ запроса и результат
+domain -[hidden]down-> persistence
+kafka --> consumer : Результаты замка и оплаты;\nполитики и телеметрия
+consumer --> persistence : Inbox и проекции
+consumer --> saga : Новое подтверждение
+recovery --> persistence : Просроченные операции
+recovery --> saga : Продолжить / сверить / компенсировать
+persistence --> db : SQL: локальные транзакции
+publisher --> db : Читать outbox / отмечать публикацию
+publisher --> kafka : Команды Fleet/Billing;\nначисления и события поездки
+@enduml
