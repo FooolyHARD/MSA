@@ -1,0 +1,90 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+title C4 — C2 Containers
+left to right direction
+skinparam shadowing false
+skinparam linetype polyline
+skinparam nodesep 100
+skinparam ranksep 180
+skinparam padding 20
+skinparam defaultFontSize 16
+skinparam ArrowFontSize 14
+skinparam packagePadding 35
+actor "Арендатор / оператор\n[Person]" as user
+rectangle "PSP\n[External System]" as psp #EEEEEE
+rectangle "Устройства\n[External System]" as devices #EEEEEE
+package "Платформа аренды самокатов [Software System]" {
+ rectangle "Клиентское приложение / Admin UI\n[Container: UI]" as ui #DCEBFF
+ rectangle "API Gateway [A]\n[Container: reverse proxy]\nМаршрутизация, лимиты, проверка токена" as gateway #DCEBFF
+ rectangle "Customer Service [A]\n[Container: application]\nПрофиль, аутентификация и допуск" as customer #DCEBFF
+ rectangle "Rental Service [A]\n[Container: application]\nПоездки, штрафы, saga" as rental #DCEBFF
+ rectangle "Fleet Service [B]\n[Container: application]\nРезервы, телеметрия, ACL устройств" as fleet #DCEBFF
+ rectangle "Discovery Service [B]\n[Container: application]\nГеопоиск по проекции" as discovery #DCEBFF
+ rectangle "Geo Service [B]\n[Container: application]\nВерсионированные зоны" as geo #DCEBFF
+ rectangle "Pricing Service [C]\n[Container: application]\nТарифы и котировки" as pricing #DCEBFF
+ rectangle "Billing Service [C]\n[Container: application]\nПлатежи, долг, ACL PSP" as billing #DCEBFF
+ queue "Kafka [B — эксплуатация]\n[Container: message broker]\nКоманды saga, факты, проекции" as kafka #FFF0CC
+ database "Customer DB\n[Container: private database]\nUser, допуск" as customerdb
+ database "Rental DB\n[Container: private database]\nTrip, Fine, saga, снимки" as rentaldb
+ database "Fleet DB / telemetry store\n[Container: private data store]\nScooter, Location, резерв, команды" as fleetdb
+ database "Discovery DB\n[Container: private geospatial store]\nПоисковая проекция" as discoverydb
+ database "Geo DB\n[Container: private database]\nGeofence, версии" as geodb
+ database "Pricing DB\n[Container: private database]\nTariff, Quote" as pricingdb
+ database "Billing DB\n[Container: private database]\nPayment, долг, журнал" as billingdb
+}
+' Невидимые связи фиксируют колонки сервисов и их хранилищ.
+customer -[hidden]down-> rental
+rental -[hidden]down-> fleet
+fleet -[hidden]down-> discovery
+discovery -[hidden]down-> geo
+geo -[hidden]down-> pricing
+pricing -[hidden]down-> billing
+customerdb -[hidden]down-> rentaldb
+rentaldb -[hidden]down-> fleetdb
+fleetdb -[hidden]down-> discoverydb
+discoverydb -[hidden]down-> geodb
+geodb -[hidden]down-> pricingdb
+pricingdb -[hidden]down-> billingdb
+billingdb -[hidden]right-> kafka
+user --> ui : Использует
+ui --> gateway : HTTPS / REST
+gateway --> customer : REST: профиль, вход
+gateway --> rental : REST: поездка, штрафы
+gateway --> fleet : REST: управление\nпарком
+gateway --> discovery : REST: карта
+gateway --> geo : REST: управление\nзонами
+gateway --> pricing : REST: тарифы
+gateway --> billing : REST: история, возвраты
+rental -[norank]-> fleet : REST: резерв / продление
+rental -[norank]-> pricing : REST: котировка\nили локальная версия
+rental -[norank]-> geo : REST: проверка\nили локальная версия
+rental -[norank]-> customer : REST: допуск\nесли проекция несвежая
+customer --> customerdb : SQL: собственные данные
+rental --> rentaldb : SQL: собственные данные
+fleet --> fleetdb : Собственные записи / чтения
+discovery --> discoverydb : Геозапросы / проекция
+geo --> geodb : SQL / геозапросы
+pricing --> pricingdb : SQL: собственные данные
+billing --> billingdb : SQL: собственные данные
+customer -[norank]-> kafka : Допуски
+pricing -[norank]-> kafka : Версии тарифов
+geo -[norank]-> kafka : Версии зон
+rental -[norank]-> kafka : Команды замку и оплате;\nначисления
+kafka -[norank]-> rental : Подтверждения; версии;\nтелеметрия; допуски
+fleet -[norank]-> kafka : Состояние, координаты,\nрезультаты команд
+kafka -[norank]-> fleet : Открыть / закрыть / освободить
+billing -[norank]-> kafka : Результаты авторизации / оплаты
+kafka -[norank]-> billing : Авторизация / списание / отмена;\nначисления
+kafka -[norank]-> discovery : Состояния, координаты, зоны
+fleet --> devices : MQTT/TLS: команды
+devices --> fleet : MQTT/TLS: ACK, телеметрия
+billing --> psp : HTTPS: авторизация / списание / сверка
+psp --> billing : HTTPS: подписанный webhook
+legend bottom
+C2 показывает контейнеры, их назначение, технологии и физическое направление обращений.
+A/B/C — команды-владельцы. Приватные БД недоступны соседним сервисам.
+Outbox/inbox — внутренние таблицы/обработчики сервисов, не отдельные сервисы.
+Входящий webhook проходит защищённый ingress Billing; Gateway не оркестрирует saga.
+Реплики, балансировщики и failover — уровень deployment, здесь не показаны.
+endlegend
+@enduml

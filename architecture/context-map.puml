@@ -1,0 +1,29 @@
+@startuml
+
+title Context Map — сервис аренды самокатов
+
+left to right direction
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam nodesep 60
+skinparam ranksep 90
+
+rectangle "Управление пользователями" as customer
+rectangle "Управление парком самокатов" as fleet
+rectangle "Поиск самокатов" as search
+rectangle "Управление поездками" as rental
+rectangle "Управление тарифами" as pricing
+rectangle "Управление оплатой" as payment
+rectangle "Управление геозонами" as geo
+
+customer --> rental : данные пользователя\nи право аренды
+fleet --> search : расположение и доступность\nсамокатов
+geo --> search : зоны для карты
+pricing --> rental : тарифные условия
+geo --> rental : правила движения\nи парковки
+rental --> fleet : резервирование, разблокировка\nи блокировка самоката
+fleet --> rental : подтверждение состояния замка\nи данные поездки
+rental --> payment : запрос авторизации\nи оплаты поездки / штрафа
+payment --> rental : результат авторизации\nи оплаты
+
+@enduml

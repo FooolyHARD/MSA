@@ -1,0 +1,16 @@
+@startuml
+title C4 — C1
+left to right direction
+skinparam shadowing false
+actor "Арендатор\n[Person]" as user
+actor "Оператор\n[Person]" as operator
+rectangle "Платформа аренды самокатов\n[Software System]\nПоиск, поездки, тарифы, оплата и геозоны" as system #DCEBFF
+rectangle "Платёжный провайдер (PSP)\n[External Software System]\nЭквайринг и возвраты" as psp #EEEEEE
+rectangle "Бортовые устройства самокатов\n[External System]\nЗамок и телеметрия" as device #EEEEEE
+user --> system : Ищет, начинает и завершает поездку\nHTTPS через приложение
+operator --> system : Управляет парком, зонами, тарифами\nHTTPS через административный UI
+system --> psp : Авторизация, списание, возврат\nHTTPS API
+psp --> system : Подтверждение результата\nHTTPS webhook
+system --> device : Управляет замком\nMQTT/TLS
+device --> system : Подтверждает команды, сообщает позицию\nMQTT/TLS
+@enduml
